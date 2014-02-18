@@ -1,0 +1,25 @@
+emacsでの開発用ツール群
+
++ dot_emacs 
+  emacs設定ファイル ホームディレクトリ(~/)の.emacsに置き換える
+  ・メニュー画面削除
+  ・tabbar.elを使ってbuffer内のファイルをタブ化(ctrl+tabで切り替え可能)
+  ・globalを使ったタグジャンプショートカットキー設定（下に詳細）
+  ・ctrl+2 or 3で分割した画面間をsift+(カーソルキー)で移動可能
+
++ glocal-4.8.6.tar.gz 
+  emacs内タグジャンプ用ソフトウェア 
+  tar zxvf で展開して、.configure; make; sudo make installする
+  タグジャンプが必要なプログラム群のあるディレクトリ内で
+  gtags -v
+  すると、GTAGS等が生成される。
+  emacs内で
+  alt+t  : 関数定義元にタグジャンプ
+  alt+r  : 関数参照リストを表示 alt+tで呼び出し元にジャンプ
+  alt+s  : 変数の参照リストを表示
+  ctrl+t : タグジャンプ前の画面に戻る
+
++ tabbar.el
+  buffer内のファイルをタブ化するemacsスクリプト
+  /usr/share/emacs/site-lisp/
+  に移動しておく

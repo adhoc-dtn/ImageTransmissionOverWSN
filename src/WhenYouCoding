@@ -1,0 +1,3 @@
+
+
+ malloc, socket, bind するときはエラー処理部分加えること

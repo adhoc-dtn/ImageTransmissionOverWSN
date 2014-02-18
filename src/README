@@ -1,0 +1,25 @@
+[概要]
+
+[各モジュールについて]
+	common.h		各種パラメータ、構造体、関数プロトタイプ定義
+	clientImageSender.c	WEBカメラから画像をキャプチャして、周期的に送信する
+	serverImageReceiver.c	上記プログラムで送信された画像データを受信する。輻輳を検知して周期を変更する。
+	packetSender.c		UDPの上にスライディングウインドウを実装したもの。sendPacketToNextを提供する。
+	createImage.c		makeImageDataを提供する。受信した画像シーケンスを、元の画像ファイルに復元して保存（serverImageReceiver.cで使用)
+
+[how to compile＆execute]
+	$ make  
+
+	※すでにオブジェクトファイルのある状態で、common.hのパラメータを変更して反映させたい場合、必ずmake cleanする。
+	$ make clean; make
+
+	makeすると、画像送信プログラムclientdと、画像受信プログラムserverdが作られる
+
+	画像送信側では
+	$ ./clientd
+	画像受信側では
+	$ ./serverd (インタフェース名: e.g. wlan0) (初期広告周期（秒）: e.g. 10.0) (受信成功率算出シーケンス数: e.g. 30 (初期広告周期☓シーケンス数=１回分の受信成功率算出タイミング秒) 
+
+
+[バージョン]
+	packetSenderでHIGHSPEED_ARQを実装中（途中）　受信シーケンスの入れ替え受信に対応できない。
