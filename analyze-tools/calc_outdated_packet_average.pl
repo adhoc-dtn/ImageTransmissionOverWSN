@@ -24,23 +24,29 @@ if ( scalar(@ARGV) < $expectedArg) { #引数の数が不足したとき、プロ
 printf("[all files %d\]\n", scalar(@ARGV));
 
 # 各ログファイルのインデックス
+#受信成功率ログのインデックス（はじめとおわり）
 $recvRatio_logfiles_first =  0;
 $recvRatio_logfiles_end   =  scalar(@ARGV)/$expectedArg-1;
+#転送データ量通知メッセージログ
 $recvMess_logfiles_first  =  scalar(@ARGV)/$expectedArg;
 $recvMess_logfiles_end    = (scalar(@ARGV)/$expectedArg)*2-1;
+#受信データログ
 $recvData_logfiles_first  = (scalar(@ARGV)/$expectedArg)*2;
 $recvData_logfiles_end    =  scalar(@ARGV)-1;
+
 
 #試行回数(受信成功率算出に使用する)
 my $try_number = 0;
 #受信スループット格納用ハッシュの初期化(perlではいらないけど一応)
-%hash_addr = ();
+%hash_addr     = ();
 
 
+# --プログラムの簡単な流れ--
 # まず受信成功率算出ログから、受信成功率算出時刻を取得
 # 次に、転送データ量通知メッセージログから、受信シーケンス範囲を取得
 #（メッセージ飛びもありうるので、メッセージ毎に範囲選択するように）
-# 最後に、画像データパケット受信ログから受信成功率算出区間からはみ出たパケット数とデータサイズを区間毎に計量
+# 最後に、画像データパケット受信ログから受信成功率算出区間からはみ出た
+# パケット(outdated packet)数とデータサイズを区間毎に計量
 
 
 for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
@@ -49,7 +55,7 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
         
     #受信成功率算出ログファイルをオープン
     $recvRatio = $ARGV[$recvRatio_fileNum];
-
+    
     #現在の転送周期をディレトリ名から取得
     # ファイルパス XXX/YYY/ZZZ/ ... , となっているので、がstat(adapt)XXsec_tryYYの
     # 名前まで探索
@@ -94,7 +100,9 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 			$ave_rrOneSection{$segment}    /= $try_number;
 			printf("segment,%d,sendingPeriod,%.3lf,sec,recv_ratio,%.3lf,"
 			       ,$segment,$ave_timerOneSection{$segment},$ave_rrOneSection{$segment} );
-			$ave_timerOneSection{$segment} = 0; #初期化
+
+			#初期化
+			$ave_timerOneSection{$segment} = 0;
 			$ave_rrOneSection{$segment}    = 0;
 
 			printf("outdated_packet,");
@@ -103,22 +111,25 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 			my $num_nodes = 0; #ノード数
 			foreach $key_ipaddr ( sort keys %hash_addr) {
 			    #試行回数分加算されているため、除算
-			    my $num_outdate_pac   = $hash_addr{$key_ipaddr}{$segment}{'num_outdate_pac'}/$try_number; #outdateパケットの合計数
-			    $sum_num_outdate_pac += $num_outdate_pac; #全ノード合計値
-			    my $size_outdate_pac  = $hash_addr{$key_ipaddr}{$segment}{'size_outdate_pac'}/$try_number; #outdateパケットの合計サイズ
-			    $sum_size_outdate_pac = $size_outdate_pac; #全ノード合計値
-			    printf("num_outdatedPacket,%.3lf,size_outdatedPacket,"
+			    my $num_outdate_pac    =  $hash_addr{$key_ipaddr}{$segment}{'num_outdate_pac'}/$try_number; #outdateパケットの合計数
+			    $sum_num_outdate_pac  += $num_outdate_pac; #全ノード合計値
+			    my $size_outdate_pac   =  $hash_addr{$key_ipaddr}{$segment}{'size_outdate_pac'}/$try_number; #outdateパケットの合計サイズ
+			    $sum_size_outdate_pac += $size_outdate_pac; #全ノード合計値
+			    printf("num_outdatedPacket,%.3lf,size_outdatedPacket,%.3lf"
 				   , $num_outdatedPacket
 				   , $size_outdatedPacket);
 			    $num_nodes++;
 			    
 			}
+			#ノード合計値(パケット数、サイズ)
 			$sum_num_outdate_pac  /= $num_nodes;
-			$sum_size_outdate_pac /= $num_nodes
-			printf("all_num,%.3lf,all_size,%.3lf\n"
-			       ,$sum_num_outdate_pac,$sum_size_outdate_pac);
+			$sum_size_outdate_pac /= $num_nodes;
+			printf("all_num,%.3lf,all_size,%.3lf\n",
+			       $sum_num_outdate_pac,$sum_size_outdate_pac);
 		    }
 		}
+		#パラメータ初期化
+		
 		#ハッシュの初期化(必須)
 		%hash_addr = ();
 		#試行回数を1に初期化	
@@ -135,8 +146,10 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
     }
 
 #受信成功率算出ログを読む
-#    printf("now reads recvRatio file,${recvRatio}\n");
+
     open IN, $recvRatio or die "cannot open $file ($!)";
+    #printf("recvRatio_log,${recvRatio}\n");
+    
     chomp(@line = <IN>);
 
     $segment = 1;  #受信成功率の算出回数（1から始まり、実験終了までの最大回数まで）
@@ -146,14 +159,15 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 	@fields                           = split(/,+/, $_);
         #受信成功率算出タイミング(可変周期の結果では可変となるので注意)
 	$deadlineOneSection{$segment}      = $fields[0]; #受信成功率算出時刻
-	$ave_rrOneSection{$segment}       += $fields[2]; #受信成功率の平均値導出用
+	$ave_rrOneSection  {$segment}     += $fields[2]; #受信成功率の平均値導出用
 
 	# printf("one segment %d : %.3lf\n"
-	# 	   ,$segment
-	# 	   ,$deadlineOneSection{$segment});
+	#        ,$segment
+	#        ,$deadlineOneSection{$segment});
 	$segment++;
     }
-    #segmentの最大値(ここで代入はあまりよくない。)
+    # segmentの最大値(ある転送周期のログ全体でのセグメント数は一定値なので、簡単にここで代入したが、
+    # 本来は、ここでの代入はあまりよくない。)
     $max_segment = $segment;
     close(IN);
 
@@ -161,50 +175,65 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
     # 転送データ量通知メッセージログファイルのオープン
     #(引数にワイルドカード指定した場合でも、試行回数部分はソートされるので、
     # 上でオープンした受信成功率ログに対応する試行の転送周期ログがオープンされる
-    $file = $ARGV[$recvMess_logfiles_first+$recvRatio_fileNum];
-    open IN, $file or die "cannot open $file ($!)";
+    $recvMess_file = $ARGV[$recvMess_logfiles_first+$recvRatio_fileNum];
+    #printf("recvMess_log,${recvMess_file}\n");
+    open IN, $recvMess_file or die "cannot open $file ($!)";
     chomp(@line = <IN>);
     $segment = 1;  #受信成功率の算出回数（1から始まり、実験終了までの最大回数まで）
 
     #転送データ量通知メッセージ数の初期化
-    @num_notifyMessOneSegment = ();
-    
+    # @num_notifyMessOneSegment = (); これ初期化されないという謎
+    %num_notifyMessOneSegment = ();
 
     foreach (@line) {
 	@fields            = split(/ +/, $_);
 	#送信元IPアドレス
-	$from_ipaddr       = "${fields[9]}";
+	$from_ipaddr       = "${fields[8]}";
+	#受信時刻
+	$time              = $fields[0];
 	
-	
-        #送信元IPアドレス毎にメッセージ中のシーケンスfrom endを格納する
-	$hash_addr{$from_ipaddr}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}}{'seq_from'} = $fields[2]; #シーケンス番号はじめ
-	$hash_addr{$from_ipaddr}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}}{'seq_end'}  = $fields[4]; #シーケンス番号はじめ
+	if ( $time > $deadlineOneSection{$segment}) {
+	    $segment++;
+	}
 
-	# printf("ipaddr,%s,from,%d,end,%d\n"
+        #初期化すると空リストになるので、0に直す
+	if($num_notifyMessOneSegment{$from_ipaddr}{$segment} eq '') {
+	    $num_notifyMessOneSegment{$from_ipaddr}{$segment} = 0;
+	}
+	#送信元IPアドレス毎にメッセージ中のシーケンスfrom endを格納する
+	$hash_addr{$from_ipaddr}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}{$segment}}{'seq_from'} 
+	= $fields[2]; #シーケンス番号はじめ
+	$hash_addr{$from_ipaddr}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}{$segment}}{'seq_end'}
+	= $fields[4]; #シーケンス番号はじめ
+
+	# printf("seg,%d,ipaddr,%s,from,%d,end,%d,mess,%d\n"
+	#        ,$segment
 	#        ,${from_ipaddr}
-	#        ,${hash_addr{$from_ipaddr}{'seq_from'}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}}}
-	#        ,${hash_addr{$from_ipaddr}{'seq_end'} {$segment}{$num_notifyMessOneSegment{$from_ipaddr}}});
+	#        ,$hash_addr{$from_ipaddr}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}{$segment}}{'seq_from'}
+	#        ,$hash_addr{$from_ipaddr}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}{$segment}}{'seq_end'}
+	#        ,$num_notifyMessOneSegment{$from_ipaddr}{$segment}
+	#     );
 	
-	$num_notifyMessOneSegment{$from_ipaddr}++; #1セグメントの間に受信したメッセージ総数
-	$segment++;
+	$num_notifyMessOneSegment{$from_ipaddr}{$segment}++; #1セグメントの間に受信したメッセージ総数
     }
    
     close(IN);
     
 
      #受信成功率算出ファイルと対応する受信パケットデータログ
-    $file = $ARGV[$recvData_logfiles_first+$recvRatio_fileNum];
+    $recvData_file = $ARGV[$recvData_logfiles_first+$recvRatio_fileNum];
     
-#    printf("now reads recvPacData file,${file}\n");
-    
-    open IN, $file or die "cannot open $file ($!)";
-    chomp(@line = <IN>);
 
+    
+    open IN, $recvData_file or die "cannot open $file ($!)";
+    chomp(@line = <IN>);
+    # printf("recvDataLog,${recvData_file}\n");
    
     # 受信パケットログからoutdateしたパケットの数とそのデータサイズを加算する
     # 第一回目のセグメントでは、outdateしたパケットを計量せず、トップ行へ戻る
     # (配列@lineはファイルの全行、$_ は１パケット分の受信ログ)
 
+    $segment = 1;
     foreach (@line) {
 	@fields              = split(/ +/, $_);
 	#送信元IPアドレス
@@ -212,22 +241,48 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 	#パケット受信時刻                                                                                                     
 	$time                =  $fields[0];
 	#送信データサイズ
-	$datasize_onesegment =  $fields[3];
+	$datasize_segment    =  $fields[3];
+	#画像シーケンス番号
+	$img_sequence        =  $fields[7];
+	#パケットシーケンス (これは判定に用いる必要はない)  
+	$pac_sequence        =  $fields[9];
 
 	#受信成功率算出タイミングで、セグメントのインデックスをインクリメント
-	if ( $time >= $deadlineOneSection{$segment}) {
+	if ( $time > $deadlineOneSection{$segment}) {
 	    $segment++;
 	}
-
+	
+	#outdateして、次セグメントに受信されたパケット数を算出
 	if ($segment > 1) {  
 	    #outdateパケットの計量
-	    foreach ($hash_addr{$ipaddr}{$segment}{$num_notifyMessOneSegment{$from_ipaddr}}{'seq_from'}) {
-	    
-	    }
-	}
+	    for ( my $message_num = 0; $message_num < $num_notifyMessOneSegment{$ipaddr}{$segment-1}; $message_num++ ) {
+		# 画像シーケンスのオーバーフローを想定していないが、もしも画像を65535枚以上送信するようであれば
+                # fromとendの大小関係に配慮する必要がある
 	
-    } #1つの受信ログファイルについて計算完了
-    
+
+		if (   $img_sequence >= $hash_addr{$ipaddr}{$segment-1}{$message_num}{'seq_from'}
+		    && $img_sequence <= $hash_addr{$ipaddr}{$segment-1}{$message_num}{'seq_end'} ) {
+		    #outdateしたパケットを加算する
+		    $hash_addr{$ipaddr}{$segment-1}{'num_outdate_pac'}++;
+		    #そのパケットサイズを加算する(bytes)
+		    $hash_addr{$ipaddr}{$segment-1}{'size_outdate_pac'} += $datasize_segment;
+		  
+		    # printf("seg,%d,hitin,%s,image_seq, %d:%d,messnum,%d,seq_f,%d,seq_e,%d,num_outdate,%d,size,%d \n"
+		    # 	   ,$segment
+		    # 	   ,$ipaddr
+		    # 	   ,$img_sequence
+		    # 	   ,$pac_sequence
+		    # 	   ,$message_num 
+		    # 	   ,$hash_addr{$ipaddr}{$segment-1}{$message_num}{'seq_from'}
+		    # 	   ,$hash_addr{$ipaddr}{$segment-1}{$message_num}{'seq_end'}
+		    # 	   ,$hash_addr{$ipaddr}{$segment-1}{'num_outdate_pac'}
+		    # 	   ,$hash_addr{$ipaddr}{$segment-1}{'size_outdate_pac'});
+		    
+		}
+	    }
+	
+	} #1つの受信ログファイルについて計算完了
+    }
     close(IN);
 
 
@@ -235,43 +290,60 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 
 
 # 引数のうち、最後のファイルを読み込んだ場合、ここでそれまでの試行における
-# 平均受信スループットを算出する
 
-if ( scalar(%hash_addr) == 0) { #ハッシュ自体が空
+printf("[outdated_packet_calculation],initial_sending_period,${dir_second_old},sec_result\n");
+#各IPアドレスごとに合計受信データ量をまとめる
+if ( scalar(%hash_addr) == 0 ) { #ハッシュ自体が空
     printf("No data received\n");
-} else {
+} else { #試行回数分の平均値を取る
 
-    #ipアドレス出力	
-    #printf("segment_number,");
-    printf("initial_sending_period,${dir_second_old},sec_result\n");
+    #試行回数の表示
     printf("all_try,%d\n",$try_number);
-    printf(",,,,");
+    
+    #ipアドレス出力
+    printf(",,,,,,,");#padding,camma
     foreach $key_ipaddr ( sort keys %hash_addr) {
-	printf("ipaddr,%s,",${key_ipaddr});
+	printf("%s,,",${key_ipaddr});
     }
     printf("\n");
     #$max_segment = $segment;
-    #ノードIP毎に平均受信スループットを算出
-    #ipアドレス出力
+    
     for($segment = 1; $segment <= $max_segment; $segment++) {
-		
-
-#送信周期の平均値算出
-	$ave_deadlineOneSection{$segment} /= $try_number;
+	#送信周期の平均値算出
+	$ave_timerOneSection{$segment} /= $try_number;
+	#受信成功率の平均値算出
 	$ave_rrOneSection{$segment}    /= $try_number;
 	printf("segment,%d,sendingPeriod,%.3lf,sec,recv_ratio,%.3lf,"
-	       ,$segment,$ave_deadlineOneSection{$segment},$ave_rrOneSection{$segment} );
+	       ,$segment,$ave_timerOneSection{$segment},$ave_rrOneSection{$segment} );
+
+	#初期化
+	$ave_timerOneSection{$segment} = 0;
+	$ave_rrOneSection{$segment}    = 0;
+
+	my $sum_num_outdate_pac = $sum_size_outdate_pac = 0.0;
+	my $num_nodes = 0; #ノード数
 	foreach $key_ipaddr ( sort keys %hash_addr) {
+	    
 	    #試行回数分加算されているため、除算
-	    my $one_throuhput = $hash_addr{$key_ipaddr}{$segment}{'th'}/$try_number;
-	    printf("%.3lf,kbps,", $one_throuhput);
+	    my $num_outdate_pac   =  $hash_addr{$key_ipaddr}{$segment}{'num_outdate_pac'}/$try_number; #outdateパケットの合計数
+	    $sum_num_outdate_pac  += $num_outdate_pac; #全ノード合計値
+	    my $size_outdate_pac  =  $hash_addr{$key_ipaddr}{$segment}{'size_outdate_pac'}/$try_number; #outdateパケットの合計サイズ
+	    $sum_size_outdate_pac += $size_outdate_pac; #全ノード合計値
+	    # printf("num_outdatedPacket,%.3lf,size_outdatedPacket,%.3lf,"
+	    # 	   ,$num_outdatedPacket
+	    # 	   ,$size_outdatedPacket);
+	    #n_op: number of outdated packets, s_op:amount of size of outdate packets
+	     printf("n_op,%.3lf,s_op,%.3lf,"
+		   ,$hash_addr{$key_ipaddr}{$segment}{'num_outdate_pac'}
+		   ,$hash_addr{$key_ipaddr}{$segment}{'size_outdate_pac'});
+	    $num_nodes++;
+	    
 	}
-	
-
-	$one_throuhput = $th_sum{$segment}/$try_number;
-	printf("all,%.3lf,kbps\n",$one_throuhput );
-	$th_sum{$segment} = 0;
-
+	#ノード合計値(パケット数、サイズ)
+	$sum_num_outdate_pac  /= $num_nodes;
+	$sum_size_outdate_pac /= $num_nodes;
+	printf("all_num,%.3lf,all_size,%.3lf\n",
+	       $sum_num_outdate_pac,$sum_size_outdate_pac);
     }
 }
 exit;
