@@ -46,9 +46,9 @@ my $num_segment_of_one_image = 312; # sequence start with 0 and end with 311
 # 画像受信割合の最低しきい値
 my $min_threash_one_image = 0.1;
 # 画像受信割合のしきい値変化
-my $adder_thread          = 0.05;
+my $adder_threash          = 0.05;
 # 最大値(100%の意味。ここは変更不可)
-my $max_threash_one_image = 1.0;
+my $max_threash_one_image = 1;
 
 
 
@@ -93,14 +93,9 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 	    #ファイル名のXXXsec部分が異なる==試行回数全体での平均値算出タイミング
 	    if (   $recvRatio_fileNum > $recvRatio_logfiles_first
 		   && $dir_second ne $dir_second_old ) {
+		#まだ作ってない（が、可変周期制御のログのみ利用するなら不要
 		printf("hoge\n");
-                # #各IPアドレスごとに合計受信データ量をまとめる
-		# if ( scalar(%hash_addr) == 0 ) { #ハッシュ自体が空
-		#     printf("No data received\n");
-		# } else { #試行回数分の平均値を取る
-
-		# }
-		
+				
 	    } else {
 		#試行回数を加算する
 		$try_number++; 
@@ -113,7 +108,7 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 
     #受信成功率算出ログを読む
     open IN, $recvRatio or die "cannot open $file ($!)";
-    #printf("recvRatio_log,${recvRatio}\n");
+    printf("recvRatio_log,${recvRatio}\n");
     
     chomp(@line = <IN>);
 
@@ -124,11 +119,14 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 	# 受信成功率
 	$rrOneSection       = $fields[2];
 	# 混雑検知しきい値と比較して、混雑解消or未解消を判定
-	if ( $rrOneSection > $threashold_cong) {
+	if ( $rrOneSection >= $threashold_cong) {
 	    #受信成功率算出タイミング
 	    $time_cong_resolve      = $fields[0]; #混雑解消した時刻 これ以降の受信データについてカウント
+	    printf("recv_ratio_exceed_cong_threash,%.3lf,at_seg,%d,recvratio,%.3lf\n",$threashold_cong,$segment,$rrOneSection);
 	    last;
 	}
+	$segment++;
+
 	
     }
 
@@ -167,28 +165,28 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 	    
 	    #画像シーケンス番号毎に受信したセグメント数とセグメントサイズを加算
 	      
-	    if (defined($hash_addr{$ipaddr})) { #ハッシュの中にip発見
+	    if ($hash_addr{$ipaddr}{$try_number}{'first'} == 1) { #最初のシーケンスが挿入済み
 		#そのシーケンス番号のパケット数を加算
-		$hash_addr{$try_number}{$ipaddr}{$img_sequence}{'num_pac'}++;
+		$hash_addr{$ipaddr}{$try_number}{$img_sequence}{'num_pac'}++;
 		#そのパケットサイズを加算する(bytes)
-		$hash_addr{$try_number}{$ipaddr}{$img_sequence}{'size_pac'}  +=$datasize_segment;
-		#シーケンス番号・ラスト
-		$hash_addr{$try_number}{$ipaddr}{$img_sequence}{'last_seq'}  = $img_sequence;
+		$hash_addr{$ipaddr}{$try_number}{$img_sequence}{'size_pac'}  +=$datasize_segment;
+	
+		#シーケンス番号・ラスト(firstラストはシーケンス番号に関係なく、試行で取る)
+		$hash_addr{$ipaddr}{$try_number}{'last_seq'}  = $img_sequence;
+	   
+
 	    } else { #当該IPにおいてはじめての受信の場合、最初のシーケンスを保存
-		$hash_addr{$try_number}{$img_sequence}{'first_pac'}          = $img_sequence;
+		$hash_addr{$ipaddr}{$try_number}{'first_seq'} = $img_sequence;
+		$hash_addr{$ipaddr}{$try_number}{'first'} = 1;
+	
 	    }
 	    
-	    # printf("seg,%d,hitin,%s,image_seq, %d:%d,messnum,%d,seq_f,%d,seq_e,%d,num_outdate,%d,size,%d \n"
-	    # 	   ,$segment
+	    # printf("${time}(${time_cong_resolve}) %s's,seq,%d(f,%d,e,%d)amount,%d\n"
 	    # 	   ,$ipaddr
 	    # 	   ,$img_sequence
-	    # 	   ,$pac_sequence
-	    # 	   ,$message_num 
-	    # 	   ,$hash_addr{$ipaddr}{$segment-1}{$message_num}{'seq_from'}
-	    # 	   ,$hash_addr{$ipaddr}{$segment-1}{$message_num}{'seq_end'}
-	    # 	   ,$hash_addr{$ipaddr}{$segment-1}{'num_outdate_pac'}
-	    # 	   ,$hash_addr{$ipaddr}{$segment-1}{'size_outdate_pac'});
-		    
+	    # 	   ,$hash_addr{$ipaddr}{$try_number}{'first_seq'}
+	    # 	   ,$hash_addr{$ipaddr}{$try_number}{'last_seq'}
+	    # 	   ,$hash_addr{$ipaddr}{$try_number}{$img_sequence}{'num_pac'});
 	    
 	    
 	} #1つの受信ログファイルについて計算完了
@@ -199,58 +197,194 @@ for (my $recvRatio_fileNum = $recvRatio_logfiles_first;
 } # END of loop
 
 
-# 統計算出
+# 以下、画像データの受信統計を算出
+# 試行回数
+
 $max_try = $try_number;
 
-printf("[outdated_packet_calculation],initial_sending_period,${dir_second_old},sec_result\n");
 #各IPアドレスごとに合計受信データ量をまとめる
 if ( scalar(%hash_addr) == 0 ) { #ハッシュ自体が空
     printf("No data received\n");
 } else { #試行回数分の平均値を取る
 
-    #試行回数の表示
-    printf("all_try,%d\n",$try_number);
-    
-    #ipアドレス出力
-    printf(",,,,,,,");#padding,camma
-    foreach $key_ipaddr ( sort keys %hash_addr) {
-	printf("%s,,",${key_ipaddr});
-    }
-    printf("\n");
-
-    
+    #画像データ受信統計保存用ハッシュ(初期化)
     my %all_recv_packet = ();
 
-    #試行回数全体で平均を取るつもりだ
+    #試行回数全体で算出(平均値は出力時にとる)
     for($try_number = 1; $try_number <= $max_try; $try_number++) {
 	
 	#各IPアドレス毎に統計を作る
 	foreach $key_ipaddr ( sort keys %hash_addr) {
 	    
-	    for (my $img_sequence  = $hash_addr{$try_number}{$img_sequence}{'first_pac'}; 
-		    $img_sequence <= $hash_addr{$try_number}{$ipaddr}{$img_sequence}{'last_seq'};
-		    $img_sequence++ ) {
+	    #混雑解消したあとのすべての画像データについて統計を取る
+	    # printf("%s's,(f,%d,e,%d)\n"
+	    # 	   ,$key_ipaddr
+	    # 	   ,$hash_addr{$key_ipaddr}{$try_number}{'first_seq'}
+	    # 	   ,$hash_addr{$key_ipaddr}{$try_number}{'last_seq'});
 
-		# 画像1枚あたりの受信割合が算出できる
-		my $recv_ratio_of_image = $hash_addr{$try_number}{$ipaddr}{$img_sequence}{'num_pac'}/$num_segment_of_one_image;
-		
-		
-		for ( my $pattern, my $now_thread = $min_threash_one_image;
-		      $now_thread                <= $max_threash_one_image;
-		      $pattern++,
-		      $now_thread                +=$adder_thread   ) {
-		    # しきい値を超えたものをカウント。
-		    if ($recv_ratio_of_image >= $now_thread) {
-			$all_recv_packet{$ipaddr}{$pattern}{"pac"}++;
-		    }
+	    for (my $img_sequence   = $hash_addr{$key_ipaddr}{$try_number}{'first_seq'}; 
+		    $img_sequence  <= $hash_addr{$key_ipaddr}{$try_number}{'last_seq'};
+      		    $img_sequence++ ) {
 
+		# 画像1枚あたりの受信割合を算出
+		my $recv_ratio_of_image = $hash_addr{$key_ipaddr}{$try_number}{$img_sequence}{'num_pac'}/$num_segment_of_one_image;
+		if( $recv_ratio_of_image > 1) {
+		    $recv_ratio_of_image  = 1;
 		}
+		# printf("%s's,seq%d,rr,%.3lf\n"
+		#        ,$key_ipaddr
+		#        ,$img_sequence
+		#        ,$recv_ratio_of_image);
+
+		# 画像データサイズのデータサイズ（構成パケット数）から
+                # 画像データ受信割合にカウントしていく
+		my $pattern;
+		my $now_threash;
+		for (    $pattern=0,  $now_threash = $min_threash_one_image;
+		         $now_threash               <= $max_threash_one_image;
+		         $pattern++,
+		         $now_threash                += $adder_threash  ) {
+
+		    # しきい値を超えたものをカウント。(パターンはしきい値に対応する)
+		    if ($recv_ratio_of_image >= $now_threash) {
+			#ノード用統計情報
+			$all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"}++;
+			# printf("%s's image_packet_over_%.3lf thresh(%.3lf),num,%d\n"
+			#        ,$key_ipaddr
+			#        ,$now_threash
+			#        ,$recv_ratio_of_image
+			#        ,$all_recv_packet{$key_ipaddr}{$pattern}{"suc_image"} );
+		
+		    }
+		}
+		
+		# printf("%s's image_packet_over_%.3lf thresh(%.3lf),num,%d\n"
+		#        ,$key_ipaddr
+		#        ,$now_threash
+		#        ,$recv_ratio_of_image
+		#        ,$all_recv_packet{$key_ipaddr}{$pattern}{"suc_image"} );
+
+		# 上のループは1.0がしきい値の場合にループを抜けてしまう(実数not equel 実数)
+		# ので、以下で1.0の割合を計算
+		if ($recv_ratio_of_image >= 0.99 ) {
+		    #ノード用統計情報
+		    printf("%s's image_packet_over_%.3lf thresh(%.3lf),num,%d\n"
+		    	   ,$key_ipaddr
+		    	   ,$now_threash
+		    	   ,$recv_ratio_of_image
+		    	   ,$all_recv_packet{$key_ipaddr}{$pattern}{"suc_image"} );
+		
+		    $all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"}++;
+		}
+	    }
+
+
+	    #受信成功率が混雑検知を超えた時の画像枚数
+	    $all_recv_packet{$key_ipaddr}{$try_number}{"num_image_data"} 
+	    = $hash_addr{$key_ipaddr}{$try_number}{'last_seq'} - $hash_addr{$key_ipaddr}{$try_number}{'first_seq'} + 1 ;
+	    #printf("all received %d\n",$all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"num_image_data"} );
 	}
-	#ノード合計値(パケット数、サイズ)
-	$sum_num_outdate_pac  /= $num_nodes;
-	$sum_size_outdate_pac /= $num_nodes;
-	printf("all_num,%.3lf,all_size,%.3lf\n",
-	       $sum_num_outdate_pac,$sum_size_outdate_pac);
+    } # end of 試行回数全体での統計情報作成
+
+    #ログの出力
+
+    #試行回数の表示
+    printf("all_try,%d\n",$max_try);
+    
+    #ipアドレス出力
+    printf(",,,,,,,");#padding,camma
+    my $num_nodes = 0;
+    foreach $key_ipaddr ( sort keys %all_recv_packet) {
+	#printf("%s,,",${key_ipaddr});
+	$num_nodes++; #ノード数
     }
+    printf("\n");
+
+    #試行回数で平均とって出す
+    # 画像データサイズのデータサイズ（構成パケット数）から
+    # 画像データ受信割合にカウントしていく
+    #各IPアドレス毎と全ノード合計
+    for($try_number = 1; $try_number <= $max_try; $try_number++) {
+
+	foreach $key_ipaddr ( sort keys %all_recv_packet) {
+	    
+	    #ローカル変数はfoaeachのスコープ内にて有効（注意）
+	    my $pattern;
+	    my  $now_threash;
+	    for ( $pattern=0, $now_threash = $min_threash_one_image;
+		  $now_threash                   <= $max_threash_one_image;
+		  $pattern++,
+		  $now_threash               += $adder_threash   ) {
+		#printf("all received %d\n",$all_recv_packet{$key_ipaddr}{$try_number}{"num_image_data"} );
+
+		#画像枚数で除算
+		$all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"} 
+		/= $all_recv_packet{$key_ipaddr}{$try_number}{"num_image_data"};
+		
+		#試行回数におけるの合計
+		$all_recv_packet{$key_ipaddr}{$pattern}{"try_all_suc_image"} 
+		+=  $all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"};
+	
+		#全ノード合計
+		$all_recv_packet{"all"}{$pattern}{"try_all_suc_image"} 
+		+=  $all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"};
+		printf("${pattern},${key_ipaddr},${try_number},threash,%.3lf,ratio,%.3lf\n",$now_threash,$all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"} );
+
+	    }
+	    #受信率1.0の場合(上のループでは1.0は計量されない)
+	    $all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"} 
+	    /= $all_recv_packet{$key_ipaddr}{$try_number}{"num_image_data"};
+	    printf("${pattern},${key_ipaddr},${try_number},threash,%.3lf,ratio,%.3lf\n",$now_threash,$all_recv_packet{$key_ipaddr}{$try_number}{$pattern}{"suc_image"} );
+	    
+	}
+    }
+    
+    #統計情報の出力
+    foreach $key_ipaddr ( sort keys %all_recv_packet) {
+	
+	my  $now_threash;
+	for ( my $pattern=0, $now_threash = $min_threash_one_image;
+	      $now_threash                   <= $max_threash_one_image;
+	      $pattern++,
+	      $now_threash               += $adder_threash   ) {
+	    
+	    #試行回数平均
+	    $all_recv_packet{$key_ipaddr}{$pattern}{"try_all_suc_image"} /= $max_try;
+	    printf("ip,%s,threash,%.3lf,ratio,%.3lf\n"
+		   ,$key_ipaddr
+		   ,$now_threash
+		   ,$all_recv_packet{$key_ipaddr}{$pattern}{"try_all_suc_image"});
+	    
+	}
+	#試行回数平均(しきい値1.0)
+	$all_recv_packet{$key_ipaddr}{$pattern}{"try_all_suc_image"} /= $max_try;
+	printf("ip,%s,threash,%.3lf,ratio,%.3lf\n"
+	       ,$key_ipaddr
+	       ,$now_threash
+	       ,$all_recv_packet{$key_ipaddr}{$pattern}{"try_all_suc_image"});
+
+	
+    }
+    
+    for ( my $pattern=0, $now_threash = $min_threash_one_image;
+	  $now_threash                   <= $max_threash_one_image;
+	  $pattern++,
+	  $now_threash               += $adder_threash   ) {
+	
+	#全ノード合計平均値
+	$all_recv_packet{"all"}{$pattern}{"try_all_suc_image"} /= ($num_nodes*$max_try);
+	printf("ip,(average),threash,%.3lf,ratio,%.3lf\n"
+	       ,$now_threash
+	       ,$all_recv_packet{"all"}{$pattern}{"try_all_suc_image"});
+    }
+    #全ノード合計平均値(しきい値1.0)
+    $all_recv_packet{"all"}{$pattern}{"try_all_suc_image"} /= ($num_nodes*$max_try);
+
+    printf("ip,(average),threash,%.3lf,ratio,%.3lf\n"
+	   ,$now_threash
+	   ,$all_recv_packet{"all"}{$pattern}{"try_all_suc_image"});
+	   
+
+
 }
 exit;
