@@ -1,66 +1,105 @@
 #!/usr/bin/perl
 
-# $ perl calc_average_rr.pl
+# 試行全体の受信成功率算出(全体、ノード別それぞれ)用スクリプトファイル
+# [実行例]
+# $ perl calc_average_rr.pl (受信成功率算出ログファイル)
 # 
-# [注意]実験用の送受信端末は、実験前後に時刻同期しければ、このプログラムから出力される遅延データは意味をなさないでしょう
-#       (recursive_XXX.plスクリプトは NICTのNTPサーバで時刻同期を取るようになっています)
-#        ただし、屋外実験など、ntpサーバと通信不可能な状況では遅延データは取れないと思います
-#        (GWを用意して実験開始前に時刻同期する方法もありますが)
-# 
-# [注意]　受信成功率算出タイミング　実験時の値を入力してください
-#------------------------
-# ありゅごりじゅむ
-# まず、サーバの受信ログを開いて、送信元IPアドレスをきろく
-# 次に、サーバの受信ログからその送信元IPアドレスについてのログのみを抽出し、
-# 対応するクライアントIPアドレスの送信ログから遅延計算する。
-# 受信時刻-送信時刻をだす。
-# これを全端末について繰り返す
+# 受信成功率算出用ログは以下のような形式にしがたう
 
-# 処理項目が多い場合、ファイルのオープン・クローズを繰り返すとオーバヘッドで処理速度が落ちるので気を付ける
+#(以下、\部分は実際には改行が入らない。次の行を含めて１行となる)
+#  時刻[0],全体受信成功率 [1,2],       送信トータル[3,4],受信トータル[5,6] \
+# ,現在設定されている受信成功率[7,8], CD or CR[9 - 12], ipX受信成功率など[13-20]8フィールド
+# 1392597130.366850,recv_r,0.654071,total_send(message),2100000,total_recv,1373550,\
+# frame_sending_period,36.000000,CD,1,CR,0,(ip),192.168.50.217,(rr),0.654071,send,2100000,recv,1373550,
 
-#use strict;
-#use warnings;
 use utf8;
 use open ":utf8";
 binmode STDIN, ':encoding(cp932)';
 binmode STDOUT, ':encoding(cp932)';
 binmode STDERR, ':encoding(cp932)';
 
+#ノード毎の受信成功率が含まれているフィールドまでのフィールド数
+$num_field_till_node_log = 13;
+#ノード別データが含まれているフィールド数
+$num_field_one_node      = 8;
+#ノード別データが含まれているフィールドにおけるipアドレス・受信成功率のフィールド部分
+$padding_ip          = 1;
+$padding_recv_ratio  = 3;
+
+#ハッシュの初期化
+%hash_addr = ();
+#試行回数の初期化
+$try_number = 0;
 
 
-$logfile = "recvRatioLog.csv";
-#ログファイル作成用
-open OUTLOG, ">> ${logfile}" or die "cannot open $logfile ($!)";
-
-
-#遅延算出フェーズ
+#ノード毎に受信成功率を算出する
 foreach $server_file (@ARGV) { 
-    #ノード毎の遅延時間格納用ハッシュ初期化（複数ファイル同時算出時を考慮）
-    %hash_addr = ();
 
     open SERVER_IN, $server_file or die "cannot open $server_file ($!)";
     chomp(@server_line = <SERVER_IN>);
     
-    printf("filename %s\n", $server_file);
+    printf("now processing filename %s\n", $server_file);
 
-    $num_lines      = 0;
-    $recv_ratio_sum = 0;
+    $line_number    = 0;
+    
+    #１行ずつ処理する
     foreach $one_line (@server_line) { 
-	@fields          = split(/,+/, $one_line);
+	my @fields          = split(/,+/, $one_line);
 	#printf("[read line] @{fields}\n");
-	$recv_ratio_sum += $fields[2]; #受信成功率
-	$sending_period  = $fields[8]; #転送周期
-	$num_lines++;
+	$hash_addr{"whole"}{"recv_ratio"} {$line_number} += $fields[2]; #全体の受信成功率
+	$hash_addr{"whole"}{"send_period"}{$line_number} += $fields[8]; #現在設定されている転送周期
+
+	#各ノードのフィールドから受信成功率の統計を取る
+	for(my $field_num = $num_field_till_node_log;
+	    $field_num < $#fields;
+	    $field_num+=$num_field_one_node) {
+
+	    # IPアドレス
+	    my   $ipaddr     = $fields[$field_num + $padding_ip];
+	    #受信成功率
+	    my   $recv_ratio = $fields[$field_num + $padding_recv_ratio];
+	    # そのIPアドレスにおける受信成功率
+	    $hash_addr{$ipaddr}{"recv_ratio"}{$line_number} += $recv_ratio;
+	    # printf("%s,%.3lf\n",$ipaddr,${hash_addr{$ipaddr}{"recv_ratio"}{$line_number}});
+	    
+	}
+	$line_number++;
     }
-    $ave_recv_ratio = $recv_ratio_sum/$num_lines;
-
-    printf("priod,${sending_period},average,${ave_recv_ratio}\n");
-    printf(OUTLOG "priod,${sending_period},average,${ave_recv_ratio}\n");
-
+    #行数最大値
+    $max_line_number = $line_number;
+    #試行回数
+    $try_number++;
     close SERVER_IN; #サーバログ１つ分の終了
-} #全ログファイルについて算出処理を繰り返し、終了
+} #全ログファイルについてデータをハッシュ内に挿入完了
 
-close(OUTLOG);
+#試行回数全体での受信統計をとる
+my $max_try = $try_number;
+
+for (my $line_number = 0; $line_number < $max_line_number ; $line_number++) {
+
+    #試行回数で除算
+    $hash_addr{"whole"}{"recv_ratio"} {$line_number} /= $max_try;
+    $hash_addr{"whole"}{"send_period"}{$line_number} /= $max_try; 
+    
+    printf("seg,%d,sending_periog,%.3lf,whole_rr,%.3lf,",
+	   $line,
+	   $hash_addr{"whole"}{"send_period"}{$line_numbe},
+	   $hash_addr{"whole"}{"recv_ratio"} {$line_number}
+	);
+    foreach $key_ipaddr ( sort keys %hash_addr) {
+	if( $key_ipaddr eq "whole" ) {
+	    last;
+	}
+	#ノードの受信成功率
+	$hash_addr{$key_ipaddr}{"recv_ratio"}{$line_number}/= $max_try;
+	printf("ip,%s,node_rr,%.3lf,"
+	       ,$key_ipaddr
+	       ,$hash_addr{$key_ipaddr}{"recv_ratio"}{$line_number});
+    }
+    
+}
+
+
 
 exit;
 
